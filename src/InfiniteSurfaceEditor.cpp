@@ -11,8 +11,8 @@ int main()
 {
     ise::rendering::VulkanRenderer renderer;
 
-	renderer.start();
-	renderer.wait_until_stop();
+    renderer.start();
+    renderer.wait_until_stop();
 
-	return 0;
+    return 0;
 }
