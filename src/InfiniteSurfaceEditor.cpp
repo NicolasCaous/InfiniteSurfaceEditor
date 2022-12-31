@@ -3,16 +3,21 @@
 #include <chrono>
 #include <iostream>
 
-#include "renderer/VulkanRenderer.h"
-
-using namespace std;
+#include "rendering/VulkanRenderer.h"
+#include "EventSystem.h"
 
 int main()
 {
+    SDL_Init(SDL_INIT_EVERYTHING);
+
     ise::rendering::VulkanRenderer renderer;
+    ise::EventSystem event_system(renderer);
 
     renderer.start();
-    renderer.wait_until_stop();
+
+    event_system.wait_until_quit();
+
+    SDL_Quit();
 
     return 0;
 }

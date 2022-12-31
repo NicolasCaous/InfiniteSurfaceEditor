@@ -12,14 +12,11 @@
 
 void ise::rendering::vulkan_device_initialization(VulkanRendererData& renderer)
 {
-    vulkan_handle_sdl_int(SDL_Init(SDL_INIT_EVERYTHING));
-    vulkan_handle_sdl_int(SDL_Vulkan_LoadLibrary(nullptr));
     renderer.window = SDL_CreateWindow("Example Vulkan Application", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 800, 600, SDL_WINDOW_VULKAN | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
     if (renderer.window == NULL)
     {
         throw new std::runtime_error(std::format("SDL window creation failed with message {0}", SDL_GetError()));
     }
-
 
     unsigned int extensionCount = 0;
     vulkan_handle_sdl_bool(SDL_Vulkan_GetInstanceExtensions(renderer.window, &extensionCount, nullptr));
@@ -28,8 +25,12 @@ void ise::rendering::vulkan_device_initialization(VulkanRendererData& renderer)
 
     vkb::InstanceBuilder builder;
     auto inst_builder = builder.set_app_name("Example Vulkan Application")
-        //.request_validation_layers()
+    #ifdef _DEBUG
+        .request_validation_layers()
         .use_default_debug_messenger();
+    #else
+        ;
+    #endif // _DEBUG
 
     for (auto extensionName : extensionNames)
     {
@@ -64,8 +65,6 @@ void ise::rendering::vulkan_device_initialization(VulkanRendererData& renderer)
 
 void ise::rendering::vulkan_create_swapchain(VulkanRendererData& renderer)
 {
-    vkb::destroy_swapchain(renderer.swapchain);
-
     vkb::SwapchainBuilder swapchain_builder{ renderer.device };
     auto swapchain_ret = swapchain_builder
         .set_old_swapchain(renderer.swapchain)
@@ -91,6 +90,7 @@ void ise::rendering::vulkan_recreate_swapchain(VulkanRendererData& renderer)
 
     renderer.swapchain.destroy_image_views(renderer.swapchain_image_views);
 
+    vkb::destroy_swapchain(renderer.swapchain);
     vulkan_create_swapchain(renderer);
     vulkan_create_framebuffers(renderer);
     vulkan_create_command_pool(renderer);
@@ -410,9 +410,9 @@ void ise::rendering::vulkan_draw_frame(VulkanRendererData& renderer)
         VK_NULL_HANDLE,
         &image_index);
 
-    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || renderer.force_refresh)
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || renderer.force_recreate_swapchain)
     {
-        renderer.force_refresh = false;
+        renderer.force_recreate_swapchain = false;
         return vulkan_recreate_swapchain(renderer);
     }
     else
@@ -491,6 +491,8 @@ void ise::rendering::vulkan_cleanup(VulkanRendererData& renderer)
     vkb::destroy_device(renderer.device);
     vkb::destroy_surface(renderer.instance, renderer.surface);
     vkb::destroy_instance(renderer.instance);
+
+    SDL_DestroyWindow(renderer.window);
 }
 
 void ise::rendering::vulkan_handle_vk_result(VkResult result)

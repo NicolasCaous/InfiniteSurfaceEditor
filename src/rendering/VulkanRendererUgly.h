@@ -17,7 +17,7 @@ namespace ise
     {
         struct VulkanRendererData {
             bool v_sync = true;
-            bool force_refresh = false;
+            bool force_recreate_swapchain = false;
             int max_frames_in_flight = 3;
 
             vkb::Instance instance;

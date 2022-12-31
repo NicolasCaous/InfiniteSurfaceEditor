@@ -2,7 +2,6 @@
 
 #include "VulkanRendererUgly.h"
 #include "SDL2/SDL.h"
-#undef main
 
 namespace ise
 {
@@ -12,9 +11,8 @@ namespace ise
         {
         private:
             int m_max_frames_per_second = 90;
-            int m_max_ticks_per_second = 2000;
-            bool m_accepting_new_draw_call = true;
-            bool m_already_started = false;
+            std::atomic<bool> m_accepting_new_draw_call = false;
+            std::atomic<bool> m_already_started = false;
             VulkanRendererData m_data;
             SDL_cond* m_finished;
             SDL_mutex* m_mutex;
@@ -24,10 +22,12 @@ namespace ise
             ~VulkanRenderer();
 
             static int render_thread_handler(void* data);
-            static int SDL_event_watcher(void* data, SDL_Event* event);
             void start();
             void stop();
-            void wait_until_stop();
+            void recreate_renderer();
+
+            bool windows_match(SDL_Window* window);
+            void handle_window_resize();
         };
     }
 }
