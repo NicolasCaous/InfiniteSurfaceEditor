@@ -35,8 +35,8 @@ int ise::EventSystem::SDL_event_watcher(void* data, SDL_Event* event)
 
     if (event->type == SDL_WINDOWEVENT)
     {
-        injected_data->trigger_window_event = true;
         injected_data->window_event_queue.push(event);
+        injected_data->trigger_window_event = true;
     }
 
     if (event->type == SDL_KEYDOWN && event->key.keysym.scancode == SDL_SCANCODE_A)

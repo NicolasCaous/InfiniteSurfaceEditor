@@ -57,9 +57,7 @@ int ise::rendering::VulkanRenderer::render_thread_handler(void* data)
         std::cout << sleep_microseconds << std::endl;
     }
 
-    SDL_LockMutex(renderer->m_mutex);
     SDL_CondSignal(renderer->m_finished);
-    SDL_UnlockMutex(renderer->m_mutex);
 
     return 0;
 }
