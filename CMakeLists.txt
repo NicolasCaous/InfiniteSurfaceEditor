@@ -3,7 +3,7 @@ include(FetchContent)
 
 project("InfiniteSurfaceEditor")
 
-add_executable(InfiniteSurfaceEditor "src/InfiniteSurfaceEditor.cpp" "src/InfiniteSurfaceEditor.h" "src/renderer/VkResultHandler.h" "src/renderer/VkResultHandler.cpp" "src/renderer/VulkanRenderer.cpp" "src/renderer/VulkanRenderer.h" "src/renderer/VulkanRendererUgly.cpp" "src/renderer/VulkanRendererUgly.h" "src/util/FileReader.cpp")
+add_executable(InfiniteSurfaceEditor "src/InfiniteSurfaceEditor.cpp" "src/InfiniteSurfaceEditor.h" "src/renderer/VkResultHandler.h"  "src/renderer/VulkanRenderer.cpp" "src/renderer/VulkanRenderer.h" "src/renderer/VulkanRendererUgly.cpp" "src/renderer/VulkanRendererUgly.h" "src/util/FileReader.cpp")
 
 FetchContent_Declare(
     fetch_vk_bootstrap
