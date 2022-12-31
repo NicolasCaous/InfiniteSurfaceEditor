@@ -1,90 +1,153 @@
 #include "VulkanRenderer.h"
 
+#include <chrono>
 #include <iostream>
 
-#include "VkBootstrap.h"
+#include "VulkanRendererUgly.h"
 #include "SDL2/SDL.h"
-#include "SDL2/SDL_Vulkan.h"
 
-#ifdef _WIN32
-    #define VK_USE_PLATFORM_WIN32_KHR
-    #define PLATFORM_SURFACE_EXTENSION_NAME VK_KHR_WIN32_SURFACE_EXTENSION_NAME
-#endif
-
-bool ise_initRenderer()
+ise::rendering::VulkanRenderer::VulkanRenderer()
 {
-    SDL_Init(SDL_INIT_EVERYTHING);
-    SDL_Vulkan_LoadLibrary(nullptr);
-    SDL_Window* window = SDL_CreateWindow("Example Vulkan Application", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 800, 600, SDL_WINDOW_VULKAN | SDL_WINDOW_SHOWN);
+	this->m_mutex = SDL_CreateMutex();
+	this->m_finished = SDL_CreateCond();
+	this->m_render_thread = NULL;
 
-    unsigned int extensionCount = 0;
-    SDL_Vulkan_GetInstanceExtensions(window, &extensionCount, nullptr);
-    std::vector<const char*> extensionNames(extensionCount);
-    SDL_Vulkan_GetInstanceExtensions(window, &extensionCount, extensionNames.data());
+	vulkan_device_initialization(this->m_data);
+	vulkan_create_swapchain(this->m_data);
+	vulkan_get_queues(this->m_data);
+	vulkan_create_render_pass(this->m_data);
+	vulkan_create_graphics_pipeline(this->m_data);
+	vulkan_create_framebuffers(this->m_data);
+	vulkan_create_command_pool(this->m_data);
+	vulkan_create_command_buffers(this->m_data);
+	vulkan_create_sync_objects(this->m_data);
 
-    vkb::InstanceBuilder builder;
-    auto inst_builder = builder.set_app_name("Example Vulkan Application")
-        .request_validation_layers()
-        .use_default_debug_messenger();
+	SDL_AddEventWatch(VulkanRenderer::SDL_event_watcher, this);
+}
 
-    for (auto extensionName : extensionNames)
-    {
-        inst_builder.enable_extension(extensionName);
-    }
+ise::rendering::VulkanRenderer::~VulkanRenderer()
+{
+	this->stop();
 
-    auto inst_ret = inst_builder.build();
-    if (!inst_ret) {
-        std::cerr << "Failed to create Vulkan instance. Error: " << inst_ret.error().message() << "\n";
-        return false;
-    }
-    vkb::Instance vkb_inst = inst_ret.value();
+	SDL_DestroyMutex(this->m_mutex);
+	SDL_DestroyCond(this->m_finished);
+	SDL_DelEventWatch(VulkanRenderer::SDL_event_watcher, this);
 
-    VkSurfaceKHR surface;
-    SDL_Vulkan_CreateSurface(window, vkb_inst, &surface);
+	SDL_WaitThread(this->m_render_thread, NULL);
+	SDL_Quit();
+}
 
-    vkb::PhysicalDeviceSelector selector{ vkb_inst };
-    auto phys_ret = selector.set_surface(surface)
-        .set_minimum_version(1, 1) // require a vulkan 1.1 capable device
-        .require_dedicated_transfer_queue()
-        .select();
-    if (!phys_ret) {
-        std::cerr << "Failed to select Vulkan Physical Device. Error: " << phys_ret.error().message() << "\n";
-        return false;
-    }
+int ise::rendering::VulkanRenderer::render_thread_handler(void* data)
+{
+	VulkanRenderer* renderer = (VulkanRenderer*) data;
 
-    vkb::DeviceBuilder device_builder{ phys_ret.value() };
-    // automatically propagate needed data from instance & physical device
-    auto dev_ret = device_builder.build();
-    if (!dev_ret) {
-        std::cerr << "Failed to create Vulkan device. Error: " << dev_ret.error().message() << "\n";
-        return false;
-    }
-    vkb::Device vkb_device = dev_ret.value();
+	bool running = renderer->m_accepting_new_draw_call;
 
-    // Get the VkDevice handle used in the rest of a vulkan application
-    VkDevice device = vkb_device.device;
+	while (running)
+	{
+		auto old_timestamp = std::chrono::high_resolution_clock::now();
+		vulkan_draw_frame(renderer->m_data);
+		running = renderer->m_accepting_new_draw_call;
 
-    // Get the graphics queue with a helper function
-    auto graphics_queue_ret = vkb_device.get_queue(vkb::QueueType::graphics);
-    if (!graphics_queue_ret) {
-        std::cerr << "Failed to get graphics queue. Error: " << graphics_queue_ret.error().message() << "\n";
-        return false;
-    }
-    VkQueue graphics_queue = graphics_queue_ret.value();
+		auto new_timestamp = std::chrono::high_resolution_clock::now();
+		auto elapsed_microseconds = std::chrono::duration_cast<std::chrono::microseconds>(new_timestamp - old_timestamp).count();
 
-    bool running = true;
-    SDL_Event Event;
+		auto sleep_microseconds = (1000000 / renderer->m_max_frames_per_second) - elapsed_microseconds;
+		if (sleep_microseconds > 0)
+		{
+			std::this_thread::sleep_for(std::chrono::microseconds(sleep_microseconds));
+		}
+		std::cout << sleep_microseconds << std::endl;
+	}
 
-    while (running) {
-        while (SDL_PollEvent(&Event)) {
-            if (Event.type == SDL_QUIT) {
-                running = false;
-            }
-        }
-    }
+	SDL_LockMutex(renderer->m_mutex);
+	SDL_CondSignal(renderer->m_finished);
+	SDL_UnlockMutex(renderer->m_mutex);
 
-    SDL_Quit();
+	return 0;
+}
 
-    // Turned 400-500 lines of boilerplate into less than fifty.
-    return true;
+int ise::rendering::VulkanRenderer::SDL_event_watcher(void* data, SDL_Event* event)
+{
+	VulkanRenderer* renderer = (VulkanRenderer*) data;
+
+	if (event->type == SDL_QUIT)
+	{
+		renderer->stop();
+	}
+
+	if (event->type == SDL_WINDOWEVENT && event->window.event == SDL_WINDOWEVENT_RESIZED)
+	{
+		SDL_Window* win = SDL_GetWindowFromID(event->window.windowID);
+
+		if (win == renderer->m_data.window) {
+			renderer->m_data.force_refresh = true;
+		}
+	}
+
+	if (event->type == SDL_KEYDOWN && event->key.keysym.scancode == SDL_SCANCODE_A)
+	{
+		//SDL_SetWindowSize(renderer->m_data.window, 800, 800);
+		renderer->m_data.v_sync = true;
+		renderer->m_data.force_refresh = true;
+	}
+
+	if (event->type == SDL_KEYDOWN && event->key.keysym.scancode == SDL_SCANCODE_S)
+	{
+		//SDL_SetWindowSize(renderer->m_data.window, 400, 400);
+		renderer->m_data.v_sync = false;
+		renderer->m_data.force_refresh = true;
+	}
+
+	return 0;
+}
+
+void ise::rendering::VulkanRenderer::start()
+{
+	if (!this->m_already_started)
+	{
+		this->m_render_thread = SDL_CreateThread(VulkanRenderer::render_thread_handler, "VulkanRenderThread", (void*) this);
+		this->m_already_started = true;
+	}
+}
+
+void ise::rendering::VulkanRenderer::stop()
+{
+	SDL_LockMutex(this->m_mutex);
+	if (this->m_accepting_new_draw_call)
+	{
+		this->m_accepting_new_draw_call = false;
+		SDL_CondWait(this->m_finished, this->m_mutex);
+		vulkan_cleanup(this->m_data);
+	}
+	SDL_UnlockMutex(this->m_mutex);
+}
+
+void ise::rendering::VulkanRenderer::wait_until_stop()
+{
+	if (!this->m_already_started)
+	{
+		throw new std::runtime_error("Can't wait renderer without starting render thread. Run start() before calling this function");
+	}
+
+	bool running = this->m_accepting_new_draw_call;
+
+	while (running)
+	{
+		auto old_timestamp = std::chrono::high_resolution_clock::now();
+
+		SDL_PumpEvents();
+		running = this->m_accepting_new_draw_call;
+
+		auto new_timestamp = std::chrono::high_resolution_clock::now();
+		auto elapsed_microseconds = std::chrono::duration_cast<std::chrono::microseconds>(new_timestamp - old_timestamp).count();
+
+		old_timestamp = new_timestamp;
+
+		auto sleep_microseconds = (1000000 / this->m_max_ticks_per_second) - elapsed_microseconds;
+		if (sleep_microseconds > 0)
+		{
+			std::this_thread::sleep_for(std::chrono::microseconds(sleep_microseconds));
+		}
+	}
 }

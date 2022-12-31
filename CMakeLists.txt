@@ -3,7 +3,7 @@ include(FetchContent)
 
 project("InfiniteSurfaceEditor")
 
-add_executable(InfiniteSurfaceEditor "src/InfiniteSurfaceEditor.cpp" "src/InfiniteSurfaceEditor.h" "src/renderer/VkResultHandler.h" "src/renderer/VkResultHandler.cpp" "src/renderer/VulkanRenderer.cpp" "src/renderer/VulkanRenderer.h")
+add_executable(InfiniteSurfaceEditor "src/InfiniteSurfaceEditor.cpp" "src/InfiniteSurfaceEditor.h" "src/renderer/VkResultHandler.h" "src/renderer/VkResultHandler.cpp" "src/renderer/VulkanRenderer.cpp" "src/renderer/VulkanRenderer.h" "src/renderer/VulkanRendererUgly.cpp" "src/renderer/VulkanRendererUgly.h" "src/util/FileReader.cpp")
 
 FetchContent_Declare(
     fetch_vk_bootstrap
@@ -24,6 +24,7 @@ target_link_libraries(InfiniteSurfaceEditor
     $<TARGET_NAME_IF_EXISTS:SDL2::SDL2main>
     $<IF:$<TARGET_EXISTS:SDL2::SDL2>,SDL2::SDL2,SDL2::SDL2-static>
 )
+target_compile_definitions(InfiniteSurfaceEditor PRIVATE VULKAN_SHADER_DIR=${CMAKE_SOURCE_DIR}/src/renderer/shaders)
 
 if(CMAKE_VERSION VERSION_GREATER 3.12)
   set_property(TARGET InfiniteSurfaceEditor PROPERTY CXX_STANDARD 20)

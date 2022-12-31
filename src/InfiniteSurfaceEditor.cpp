@@ -1,5 +1,6 @@
 ﻿#include "InfiniteSurfaceEditor.h"
 
+#include <chrono>
 #include <iostream>
 
 #include "renderer/VulkanRenderer.h"
@@ -8,8 +9,10 @@ using namespace std;
 
 int main()
 {
-	ise_initRenderer();
+    ise::rendering::VulkanRenderer renderer;
 
-	cout << "Hello CMake. AAAAAAAAAAAAAA" << endl;
+	renderer.start();
+	renderer.wait_until_stop();
+
 	return 0;
 }
