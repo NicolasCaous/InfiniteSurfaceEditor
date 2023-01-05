@@ -1,6 +1,6 @@
 #include "WindowEvents.h"
 
-#include "SDL2/SDL.h"
+#include <SDL2/SDL.h>
 
 #include "VulkanRenderer.h"
 
