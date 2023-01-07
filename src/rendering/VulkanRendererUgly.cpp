@@ -165,7 +165,15 @@ void ise::rendering::vulkan_create_logical_device(VulkanRendererData& renderer)
     }
 
     VkPhysicalDeviceFeatures device_features{};
-    device_features.samplerAnisotropy = VK_TRUE;
+
+    if (renderer.custom_config.max_anisotropy < 1.0f)
+    {
+        device_features.samplerAnisotropy = VK_FALSE;
+    }
+    else
+    {
+        device_features.samplerAnisotropy = VK_TRUE;
+    }
 
     VkDeviceCreateInfo create_info{};
     create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -274,7 +282,14 @@ void ise::rendering::vulkan_create_render_pass(VulkanRendererData& renderer)
     color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    color_attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    if (renderer.msaa_samples & VK_SAMPLE_COUNT_1_BIT)
+    {
+        color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    }
+    else
+    {
+        color_attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+    }
 
     VkAttachmentDescription depth_attachment{};
     depth_attachment.format = vulkan_find_supported_format(
@@ -318,7 +333,10 @@ void ise::rendering::vulkan_create_render_pass(VulkanRendererData& renderer)
     subpass.colorAttachmentCount = 1;
     subpass.pColorAttachments = &color_attachment_ref;
     subpass.pDepthStencilAttachment = &depth_attachment_ref;
-    subpass.pResolveAttachments = &color_attachment_resolve_ref;
+    if (!(renderer.msaa_samples & VK_SAMPLE_COUNT_1_BIT))
+    {
+        subpass.pResolveAttachments = &color_attachment_resolve_ref;
+    }
 
     VkSubpassDependency dependency{};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
@@ -328,7 +346,14 @@ void ise::rendering::vulkan_create_render_pass(VulkanRendererData& renderer)
     dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
-    std::array<VkAttachmentDescription, 3> attachments = { color_attachment, depth_attachment, color_attachment_resolve };
+    std::vector<VkAttachmentDescription> attachments;
+    attachments.push_back(color_attachment);
+    attachments.push_back(depth_attachment);
+    if (!(renderer.msaa_samples & VK_SAMPLE_COUNT_1_BIT))
+    {
+        attachments.push_back(color_attachment_resolve);
+    }
+
     VkRenderPassCreateInfo render_pass_info{};
     render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     render_pass_info.attachmentCount = static_cast<uint32_t>(attachments.size());
@@ -515,6 +540,11 @@ void ise::rendering::vulkan_create_command_pool(VulkanRendererData& renderer)
 
 void ise::rendering::vulkan_create_color_resources(VulkanRendererData& renderer)
 {
+    if (renderer.msaa_samples & VK_SAMPLE_COUNT_1_BIT)
+    {
+        return;
+    }
+
     VkFormat color_format = renderer.swap_chain_image_format;
 
     vulkan_create_image(
@@ -574,11 +604,20 @@ void ise::rendering::vulkan_create_framebuffers(VulkanRendererData& renderer)
 
     for (size_t i = 0; i < renderer.swap_chain_image_views.size(); i++)
     {
-        std::array<VkImageView, 3> attachments = {
-            renderer.color_image_view,
-            renderer.depth_image_view,
-            renderer.swap_chain_image_views[i]
-        };
+        std::vector<VkImageView> attachments;
+
+        if (renderer.msaa_samples & VK_SAMPLE_COUNT_1_BIT)
+        {
+            attachments.push_back(renderer.swap_chain_image_views[i]);
+            attachments.push_back(renderer.depth_image_view);
+        }
+        else
+        {
+            attachments.push_back(renderer.color_image_view);
+            attachments.push_back(renderer.depth_image_view);
+            attachments.push_back(renderer.swap_chain_image_views[i]);
+        }
+        
 
         VkFramebufferCreateInfo framebuffer_info{};
         framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -638,18 +677,51 @@ void ise::rendering::vulkan_create_texture_sampler(VulkanRendererData& renderer)
 
     VkSamplerCreateInfo sampler_info{};
     sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    sampler_info.magFilter = VK_FILTER_LINEAR;
-    sampler_info.minFilter = VK_FILTER_LINEAR;
+    switch (renderer.custom_config.texture_filtering)
+    {
+        case NEAREST:
+            sampler_info.magFilter = VK_FILTER_NEAREST;
+            sampler_info.minFilter = VK_FILTER_NEAREST;
+            break;
+        case NEAREST_IF_CLOSE_TO_CAMERA_ELSE_BILINEAR:
+        case NEAREST_IF_CLOSE_TO_CAMERA_ELSE_TRILINEAR:
+            sampler_info.magFilter = VK_FILTER_NEAREST;
+            sampler_info.minFilter = VK_FILTER_LINEAR;
+            break;
+        case BILINEAR:
+        case TRILINEAR:
+            sampler_info.magFilter = VK_FILTER_LINEAR;
+            sampler_info.minFilter = VK_FILTER_LINEAR;
+            break;
+    }
     sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
     sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampler_info.anisotropyEnable = VK_TRUE;
-    sampler_info.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+    if (renderer.custom_config.max_anisotropy < 1.0f)
+    {
+        sampler_info.anisotropyEnable = VK_FALSE;
+    }
+    else
+    {
+        sampler_info.anisotropyEnable = VK_TRUE;
+        sampler_info.maxAnisotropy = std::clamp(
+            renderer.custom_config.max_anisotropy, 
+            1.0f, 
+            properties.limits.maxSamplerAnisotropy);
+    }
     sampler_info.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
     sampler_info.unnormalizedCoordinates = VK_FALSE;
     sampler_info.compareEnable = VK_FALSE;
     sampler_info.compareOp = VK_COMPARE_OP_ALWAYS;
-    sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    if (renderer.custom_config.texture_filtering == TRILINEAR ||
+        renderer.custom_config.texture_filtering == NEAREST_IF_CLOSE_TO_CAMERA_ELSE_TRILINEAR)
+    {
+        sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    }
+    else
+    {
+        sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    }
     sampler_info.minLod = 0.0f;
     sampler_info.maxLod = static_cast<float>(renderer.mip_levels);
     sampler_info.mipLodBias = 0.0f;
@@ -1111,13 +1183,32 @@ VkSampleCountFlagBits ise::rendering::vulkan_get_max_usable_sample_count(VulkanR
     VkPhysicalDeviceProperties physical_device_properties;
     vkGetPhysicalDeviceProperties(renderer.physical_device, &physical_device_properties);
 
-    VkSampleCountFlags counts = physical_device_properties.limits.framebufferColorSampleCounts & physical_device_properties.limits.framebufferDepthSampleCounts;
-    if (counts & VK_SAMPLE_COUNT_64_BIT) return VK_SAMPLE_COUNT_64_BIT;
-    if (counts & VK_SAMPLE_COUNT_32_BIT) return VK_SAMPLE_COUNT_32_BIT;
-    if (counts & VK_SAMPLE_COUNT_16_BIT) return VK_SAMPLE_COUNT_16_BIT;
-    if (counts & VK_SAMPLE_COUNT_8_BIT)  return VK_SAMPLE_COUNT_8_BIT;
-    if (counts & VK_SAMPLE_COUNT_4_BIT)  return VK_SAMPLE_COUNT_4_BIT;
-    if (counts & VK_SAMPLE_COUNT_2_BIT)  return VK_SAMPLE_COUNT_2_BIT;
+    uint32_t acceptable_sample_count = VK_SAMPLE_COUNT_1_BIT;
+    uint32_t current_sample_count = VK_SAMPLE_COUNT_1_BIT;
+    while (true)
+    {
+        acceptable_sample_count |= current_sample_count;
+
+        if (renderer.custom_config.msaa_sample_target & current_sample_count)
+        {
+            break;
+        }
+
+        if (current_sample_count & VK_SAMPLE_COUNT_64_BIT)
+        {
+            break;
+        }
+
+        current_sample_count <<= 1;
+    }
+
+    VkSampleCountFlags possible_sample_count = physical_device_properties.limits.framebufferColorSampleCounts & physical_device_properties.limits.framebufferDepthSampleCounts;
+    if (possible_sample_count & acceptable_sample_count & VK_SAMPLE_COUNT_64_BIT) return VK_SAMPLE_COUNT_64_BIT;
+    if (possible_sample_count & acceptable_sample_count & VK_SAMPLE_COUNT_32_BIT) return VK_SAMPLE_COUNT_32_BIT;
+    if (possible_sample_count & acceptable_sample_count & VK_SAMPLE_COUNT_16_BIT) return VK_SAMPLE_COUNT_16_BIT;
+    if (possible_sample_count & acceptable_sample_count & VK_SAMPLE_COUNT_8_BIT)  return VK_SAMPLE_COUNT_8_BIT;
+    if (possible_sample_count & acceptable_sample_count & VK_SAMPLE_COUNT_4_BIT)  return VK_SAMPLE_COUNT_4_BIT;
+    if (possible_sample_count & acceptable_sample_count & VK_SAMPLE_COUNT_2_BIT)  return VK_SAMPLE_COUNT_2_BIT;
 
     return VK_SAMPLE_COUNT_1_BIT;
 }
@@ -1505,9 +1596,12 @@ void ise::rendering::vulkan_cleanup_swap_chain(VulkanRendererData& renderer)
     vkDestroyImage(renderer.device, renderer.depth_image, nullptr);
     vkFreeMemory(renderer.device, renderer.depth_image_memory, nullptr);
 
-    vkDestroyImageView(renderer.device, renderer.color_image_view, nullptr);
-    vkDestroyImage(renderer.device, renderer.color_image, nullptr);
-    vkFreeMemory(renderer.device, renderer.color_image_memory, nullptr);
+    if (!(renderer.msaa_samples & VK_SAMPLE_COUNT_1_BIT))
+    {
+        vkDestroyImageView(renderer.device, renderer.color_image_view, nullptr);
+        vkDestroyImage(renderer.device, renderer.color_image, nullptr);
+        vkFreeMemory(renderer.device, renderer.color_image_memory, nullptr);
+    }
 
     for (auto frame_buffer : renderer.swap_chain_framebuffers)
     {
@@ -1582,8 +1676,42 @@ void ise::rendering::vulkan_update_uniform_buffer(VulkanRendererData& renderer, 
     // eye is camera position
     // center is lookAt position
     ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
-    ubo.proj = glm::ortho(-2.0f, 2.0f, -2.0f, 2.0f, 0.1f, 10000.0f);
-    //ubo.proj = glm::perspective(glm::radians(45.0f), renderer.swap_chain_extent.width / (float)renderer.swap_chain_extent.height, 0.1f, 10.0f);
+
+    switch (renderer.custom_config.projection_type)
+    {
+        case PERSPECTIVE_PROJECTION:
+            ubo.proj = glm::perspective(
+                glm::radians(renderer.custom_config.perspective_vertical_fov),
+                renderer.swap_chain_extent.width / (float)renderer.swap_chain_extent.height,
+                renderer.custom_config.z_near,
+                renderer.custom_config.z_far);
+            break;
+        case ORTHOGRAPHIC_PROJECTION:
+            float width_proportion = (float)renderer.swap_chain_extent.width / (float)renderer.swap_chain_extent.height;
+            if (width_proportion > 1.0f)
+            {
+                ubo.proj = glm::ortho(
+                    renderer.custom_config.orthographic_scale_factor * width_proportion / (float)-2.0,
+                    renderer.custom_config.orthographic_scale_factor * width_proportion / (float)2.0,
+                    renderer.custom_config.orthographic_scale_factor * -0.5f,
+                    renderer.custom_config.orthographic_scale_factor * 0.5f,
+                    renderer.custom_config.z_near,
+                    renderer.custom_config.z_far);
+            }
+            else
+            {
+                float height_proportion = (float)renderer.swap_chain_extent.height / (float)renderer.swap_chain_extent.width;
+                ubo.proj = glm::ortho(
+                    renderer.custom_config.orthographic_scale_factor * -0.5f,
+                    renderer.custom_config.orthographic_scale_factor * 0.5f,
+                    renderer.custom_config.orthographic_scale_factor * height_proportion / (float)-2.0f,
+                    renderer.custom_config.orthographic_scale_factor * height_proportion / (float)2.0f,
+                    renderer.custom_config.z_near,
+                    renderer.custom_config.z_far);
+            }
+            break;
+    }
+
     ubo.proj[1][1] *= -1;
 
     memcpy(renderer.uniform_buffers_mapped[current_image], &ubo, sizeof(ubo));

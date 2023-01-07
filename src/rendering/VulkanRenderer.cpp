@@ -139,6 +139,8 @@ void ise::rendering::VulkanRenderer::sdl_create_window()
     {
         throw new std::runtime_error(std::format("SDL window creation failed with message {0}", SDL_GetError()));
     }
+
+    SDL_SetWindowMinimumSize(this->m_window, 250, 250);
 }
 
 void ise::rendering::VulkanRenderer::sdl_get_instance_extensions()

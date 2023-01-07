@@ -10,7 +10,8 @@ void ise::rendering::window_event_handler(VulkanRenderer& renderer, SDL_Event* e
     {
         SDL_Window* win = SDL_GetWindowFromID(event->window.windowID);
 
-        if (renderer.windows_match(win)) {
+        if (renderer.windows_match(win))
+        {
             renderer.handle_window_resize();
         }
     }

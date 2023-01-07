@@ -110,6 +110,21 @@ namespace ise
             }
         };
 
+        typedef enum ProjectionType
+        {
+            PERSPECTIVE_PROJECTION = 0,
+            ORTHOGRAPHIC_PROJECTION = 1
+        } ProjectionType;
+
+        typedef enum TextureFilteringType
+        {
+            NEAREST = 0,
+            NEAREST_IF_CLOSE_TO_CAMERA_ELSE_BILINEAR = 1,
+            NEAREST_IF_CLOSE_TO_CAMERA_ELSE_TRILINEAR = 2,
+            BILINEAR = 3,
+            TRILINEAR = 4
+        } TextureFilteringType;
+
         struct VulkanRendererConfig
         {
             #ifdef _DEBUG
@@ -119,6 +134,17 @@ namespace ise
             #endif
             int max_frames_in_flight = 3;
             bool v_sync = true;
+            VkSampleCountFlagBits msaa_sample_target = VK_SAMPLE_COUNT_1_BIT;
+            float max_anisotropy = 0.0f; // 0 is disabled
+            TextureFilteringType texture_filtering = TRILINEAR;
+
+            float z_near = 0.1f;
+            float z_far = 10000.0f;
+            ProjectionType projection_type = ORTHOGRAPHIC_PROJECTION;
+
+            float perspective_vertical_fov = 60.0f;
+
+            float orthographic_scale_factor = 2.0f;
         };
 
         struct VulkanRendererData
