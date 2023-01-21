@@ -124,7 +124,9 @@ bool ise::rendering::VulkanRenderer::windows_match(SDL_Window* window)
 void ise::rendering::VulkanRenderer::load_obj_with_texture(std::string obj_path, std::string texture_path)
 {
     RenderObject* render_object = vulkan_create_render_object(this->m_data);
+    RenderObject* render_object2 = vulkan_create_render_object(this->m_data);
     render_object->type = OBJ_WITH_STATIC_TEXTURE;
+    render_object2->type = OBJ_WITH_STATIC_TEXTURE;
 
     std::string warn, err;
     if (!tinyobj::LoadObj(&render_object->geometry.attrib, &render_object->geometry.shapes, &render_object->geometry.materials, &warn, &err, obj_path.c_str()))
@@ -132,7 +134,12 @@ void ise::rendering::VulkanRenderer::load_obj_with_texture(std::string obj_path,
         throw std::runtime_error(warn + err);
     }
 
-    RenderTexture* render_texture = vulkan_create_render_texture(this->m_data);
+    if (!tinyobj::LoadObj(&render_object2->geometry.attrib, &render_object2->geometry.shapes, &render_object2->geometry.materials, &warn, &err, obj_path.c_str()))
+    {
+        throw std::runtime_error(warn + err);
+    }
+
+    RenderTexture* render_texture = vulkan_create_render_texture("test_texture", this->m_data);
 
     render_texture->raw_texture.pixels = stbi_load(
         texture_path.c_str(),
@@ -149,10 +156,13 @@ void ise::rendering::VulkanRenderer::load_obj_with_texture(std::string obj_path,
     vulkan_create_texture_image(this->m_data, *render_texture);
     vulkan_create_texture_sampler(this->m_data, *render_texture);
 
-    render_object->textures.push_back(render_texture);
+    render_object->textures.push_back("test_texture");
+    render_object2->textures.push_back("test_texture");
 
     vulkan_create_textures_description_set(this->m_data, *render_object);
-    vulkan_load_model_geometry(this->m_data, *render_object);
+    vulkan_create_textures_description_set(this->m_data, *render_object2);
+    vulkan_load_model_geometry(this->m_data, *render_object, { 0.0f, 0.0f, 0.0f });
+    vulkan_load_model_geometry(this->m_data, *render_object2, { 0.1f, 1.0f, -0.1f });
 
     stbi_image_free(render_texture->raw_texture.pixels);
 }

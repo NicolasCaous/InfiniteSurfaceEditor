@@ -145,11 +145,17 @@ namespace ise
             std::vector<tinyobj::material_t> materials;
         };
 
+        //struct RenderMaterial
+        //{
+        //    std::vector<std::string> textures;
+        //    VkDescriptorSet texture_description_set;
+        //};
+
         struct RenderObject
         {
             RenderObjectType type;
 
-            std::vector<RenderTexture*> textures;
+            std::vector<std::string> textures;
             VkDescriptorSet texture_description_set;
 
             RenderGeometry geometry;
@@ -244,8 +250,8 @@ namespace ise
             VkDeviceMemory depth_image_memory;
             VkImageView depth_image_view;
 
-            std::vector<RenderTexture> render_textures;
-            std::vector<RenderObject> render_objects;
+            std::unordered_map<std::string, RenderTexture*> render_textures;
+            std::vector<RenderObject*> render_objects;
             std::vector<Vertex> vertices;
             std::vector<uint32_t> indices;
             VkDeviceSize vertex_buffer_size = 0;
@@ -290,12 +296,14 @@ namespace ise
         void vulkan_create_sync_objects(VulkanRendererData& renderer);
 
         // Public 
-        RenderTexture* vulkan_create_render_texture(VulkanRendererData& renderer);
+        RenderTexture* vulkan_create_render_texture(std::string key, VulkanRendererData& renderer);
+        bool vulkan_destroy_render_texture(std::string key, VulkanRendererData& renderer);
+        bool vulkan_destroy_render_texture_unsafe(std::string key, VulkanRendererData& renderer);
         RenderObject* vulkan_create_render_object(VulkanRendererData& renderer);
         void vulkan_create_texture_image(VulkanRendererData& renderer, RenderTexture& render_texture);
         void vulkan_create_texture_sampler(VulkanRendererData& renderer, RenderTexture& render_texture);
         void vulkan_create_textures_description_set(VulkanRendererData& renderer, RenderObject& render_object);
-        void vulkan_load_model_geometry(VulkanRendererData& renderer, RenderObject& render_object);
+        void vulkan_load_model_geometry(VulkanRendererData& renderer, RenderObject& render_object, std::vector<float> offset);
         void vulkan_draw_frame(VulkanRendererData& renderer);
         void vulkan_cleanup(VulkanRendererData& renderer);
 

@@ -15,6 +15,7 @@
 #include <optional>
 #include <set>
 #include <unordered_map>
+#include <unordered_set>
 
 #ifndef STB_IMAGE_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
@@ -740,20 +741,49 @@ void ise::rendering::vulkan_create_command_buffers(VulkanRendererData& renderer)
     }
 }
 
-ise::rendering::RenderTexture* ise::rendering::vulkan_create_render_texture(VulkanRendererData& renderer)
+ise::rendering::RenderTexture* ise::rendering::vulkan_create_render_texture(std::string key, VulkanRendererData& renderer)
 {
     std::lock_guard<std::mutex> lock(renderer.mutex);
-    int i = renderer.render_textures.size();
-    renderer.render_textures.push_back({});
-    return &renderer.render_textures[i];
+
+    vulkan_destroy_render_texture_unsafe(key, renderer);
+    renderer.render_textures[key] = new RenderTexture;
+    return renderer.render_textures[key];
+}
+
+bool ise::rendering::vulkan_destroy_render_texture(std::string key, VulkanRendererData& renderer)
+{
+    std::lock_guard<std::mutex> lock(renderer.mutex);
+    return vulkan_destroy_render_texture_unsafe(key, renderer);
+}
+
+bool ise::rendering::vulkan_destroy_render_texture_unsafe(std::string key, VulkanRendererData& renderer)
+{
+    if (renderer.render_textures.count(key) == 0)
+    {
+        return false;
+    }
+
+    RenderTexture* render_texture = renderer.render_textures[key];
+    renderer.render_textures.erase(key);
+
+    vkDestroySampler(renderer.device, render_texture->sampler, nullptr);
+    vkDestroyImageView(renderer.device, render_texture->image_view, nullptr);
+
+    vkDestroyImage(renderer.device, render_texture->image, nullptr);
+    vkFreeMemory(renderer.device, render_texture->image_memory, nullptr);
+
+    delete render_texture;
+
+    return true;
 }
 
 ise::rendering::RenderObject* ise::rendering::vulkan_create_render_object(VulkanRendererData& renderer)
 {
     std::lock_guard<std::mutex> lock(renderer.mutex);
-    int i = renderer.render_objects.size();
-    renderer.render_objects.push_back({});
-    return &renderer.render_objects[i];
+
+    RenderObject* render_object = new RenderObject;
+    renderer.render_objects.push_back(render_object);
+    return render_object;
 }
 
 void ise::rendering::vulkan_create_texture_image(VulkanRendererData& renderer, RenderTexture& render_texture)
@@ -878,8 +908,8 @@ void ise::rendering::vulkan_create_textures_description_set(VulkanRendererData& 
     {
         VkDescriptorImageInfo image_info{};
         image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        image_info.imageView = render_object.textures[i]->image_view;
-        image_info.sampler = render_object.textures[i]->sampler;
+        image_info.imageView = renderer.render_textures[render_object.textures[i]]->image_view;
+        image_info.sampler = renderer.render_textures[render_object.textures[i]]->sampler;
 
         VkWriteDescriptorSet descriptor_write;
         descriptor_write.pNext = nullptr;
@@ -897,7 +927,7 @@ void ise::rendering::vulkan_create_textures_description_set(VulkanRendererData& 
     vkUpdateDescriptorSets(renderer.device, static_cast<uint32_t>(descriptor_writes.size()), descriptor_writes.data(), 0, nullptr);
 }
 
-void ise::rendering::vulkan_load_model_geometry(VulkanRendererData& renderer, RenderObject& render_object)
+void ise::rendering::vulkan_load_model_geometry(VulkanRendererData& renderer, RenderObject& render_object, std::vector<float> offset)
 {
     std::lock_guard<std::mutex> lock(renderer.mutex);
 
@@ -910,9 +940,9 @@ void ise::rendering::vulkan_load_model_geometry(VulkanRendererData& renderer, Re
             Vertex vertex{};
 
             vertex.pos = {
-                render_object.geometry.attrib.vertices[3 * index.vertex_index + 0],
-                render_object.geometry.attrib.vertices[3 * index.vertex_index + 1],
-                render_object.geometry.attrib.vertices[3 * index.vertex_index + 2]
+                render_object.geometry.attrib.vertices[3 * index.vertex_index + 0] + offset[0],
+                render_object.geometry.attrib.vertices[3 * index.vertex_index + 1] + offset[1],
+                render_object.geometry.attrib.vertices[3 * index.vertex_index + 2] + offset[2]
             };
 
             vertex.tex_coord = {
@@ -1028,14 +1058,23 @@ void ise::rendering::vulkan_cleanup(VulkanRendererData& renderer)
 
     vkDestroyDescriptorPool(renderer.device, renderer.descriptor_pool, nullptr);
 
-    for (int i = 0; i < renderer.render_textures.size(); ++i)
+    for (auto render_texture : renderer.render_textures)
     {
-        vkDestroySampler(renderer.device, renderer.render_textures[i].sampler, nullptr);
-        vkDestroyImageView(renderer.device, renderer.render_textures[i].image_view, nullptr);
+        vkDestroySampler(renderer.device, render_texture.second->sampler, nullptr);
+        vkDestroyImageView(renderer.device, render_texture.second->image_view, nullptr);
 
-        vkDestroyImage(renderer.device, renderer.render_textures[i].image, nullptr);
-        vkFreeMemory(renderer.device, renderer.render_textures[i].image_memory, nullptr);
+        vkDestroyImage(renderer.device, render_texture.second->image, nullptr);
+        vkFreeMemory(renderer.device, render_texture.second->image_memory, nullptr);
+
+        delete render_texture.second;
     }
+    renderer.render_textures.clear();
+
+    for (int i = 0; i < renderer.render_objects.size(); ++i)
+    {
+        delete renderer.render_objects[i];
+    }
+    renderer.render_objects.clear();
 
     vkDestroyDescriptorSetLayout(renderer.device, renderer.descriptor_set_layout_uniform_buffers, nullptr);
     vkDestroyDescriptorSetLayout(renderer.device, renderer.descriptor_set_layout_textures, nullptr);
@@ -1849,10 +1888,7 @@ void ise::rendering::vulkan_record_command_buffer(VulkanRendererData& renderer, 
 
     std::vector<VkDescriptorSet> descriptor_sets;
     descriptor_sets.push_back(renderer.uniform_buffers_descriptor_sets[renderer.current_frame]);
-    for (int i = 0; i < renderer.render_objects.size(); ++i)
-    {
-        descriptor_sets.push_back(renderer.render_objects[i].texture_description_set);
-    }
+    descriptor_sets.push_back(renderer.render_objects[0]->texture_description_set);
 
     vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer.pipeline_layout, 0, descriptor_sets.size(), descriptor_sets.data(), 0, nullptr);
 
