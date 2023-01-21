@@ -228,7 +228,8 @@ namespace ise
             std::vector<VkFramebuffer> swap_chain_framebuffers;
 
             VkRenderPass render_pass;
-            VkDescriptorSetLayout descriptor_set_layout;
+            VkDescriptorSetLayout descriptor_set_layout_uniform_buffers;
+            VkDescriptorSetLayout descriptor_set_layout_textures;
             VkPipelineLayout pipeline_layout;
             VkPipeline graphics_pipeline;
 
@@ -247,10 +248,10 @@ namespace ise
             std::vector<RenderObject> render_objects;
             std::vector<Vertex> vertices;
             std::vector<uint32_t> indices;
-            VkDeviceSize vertex_buffer_size;
+            VkDeviceSize vertex_buffer_size = 0;
             VkBuffer vertex_buffer;
             VkDeviceMemory vertex_buffer_memory;
-            VkDeviceSize index_buffer_size;
+            VkDeviceSize index_buffer_size = 0;
             VkBuffer index_buffer;
             VkDeviceMemory index_buffer_memory;
 

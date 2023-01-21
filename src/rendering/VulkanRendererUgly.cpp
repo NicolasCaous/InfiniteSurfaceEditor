@@ -380,28 +380,33 @@ void ise::rendering::vulkan_create_descriptor_set_layout(VulkanRendererData& ren
     ubo_layout_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
     bindings.push_back(ubo_layout_binding);
 
-    //physical_device_properties.limits.maxPerStageDescriptorSamplers
-    //int offset = bindings.size();
-    //for (int i = 0; i < 16; ++i)
-    //{
-        VkDescriptorSetLayoutBinding sampler_layout_binding{};
-        //sampler_layout_binding.binding = offset + i;
-        sampler_layout_binding.binding = 1;
-        sampler_layout_binding.descriptorCount = 1;
-        sampler_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        sampler_layout_binding.pImmutableSamplers = nullptr;
-        sampler_layout_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-        bindings.push_back(sampler_layout_binding);
-    //}
+    VkDescriptorSetLayoutCreateInfo layout_info_uniform_buffers{};
+    layout_info_uniform_buffers.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layout_info_uniform_buffers.bindingCount = static_cast<uint32_t>(bindings.size());
+    layout_info_uniform_buffers.pBindings = bindings.data();
 
-    VkDescriptorSetLayoutCreateInfo layout_info{};
-    layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
-    layout_info.pBindings = bindings.data();
-
-    if (vkCreateDescriptorSetLayout(renderer.device, &layout_info, nullptr, &renderer.descriptor_set_layout) != VK_SUCCESS)
+    if (vkCreateDescriptorSetLayout(renderer.device, &layout_info_uniform_buffers, nullptr, &renderer.descriptor_set_layout_uniform_buffers) != VK_SUCCESS)
     {
-        throw std::runtime_error("failed to create descriptor set layout!");
+        throw std::runtime_error("failed to create descriptor set layout for uniform buffers!");
+    }
+
+    bindings.clear();
+    VkDescriptorSetLayoutBinding sampler_layout_binding{};
+    sampler_layout_binding.binding = 0;
+    sampler_layout_binding.descriptorCount = 1;
+    sampler_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    sampler_layout_binding.pImmutableSamplers = nullptr;
+    sampler_layout_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    bindings.push_back(sampler_layout_binding);
+
+    VkDescriptorSetLayoutCreateInfo layout_info_textures{};
+    layout_info_textures.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layout_info_textures.bindingCount = static_cast<uint32_t>(bindings.size());
+    layout_info_textures.pBindings = bindings.data();
+
+    if (vkCreateDescriptorSetLayout(renderer.device, &layout_info_textures, nullptr, &renderer.descriptor_set_layout_textures) != VK_SUCCESS)
+    {
+        throw std::runtime_error("failed to create descriptor set layout for uniform buffers!");
     }
 }
 
@@ -496,12 +501,12 @@ void ise::rendering::vulkan_create_graphics_pipeline(VulkanRendererData& rendere
     dynamic_state.pDynamicStates = dynamic_states.data();
 
     std::vector<VkDescriptorSetLayout> descriptor_set_layouts;
+    descriptor_set_layouts.push_back(renderer.descriptor_set_layout_uniform_buffers);
+    descriptor_set_layouts.push_back(renderer.descriptor_set_layout_textures);
+
     VkPipelineLayoutCreateInfo pipeline_layout_info{};
     pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipeline_layout_info.setLayoutCount = 2;
-    descriptor_set_layouts.push_back(renderer.descriptor_set_layout);
-    descriptor_set_layouts.push_back(renderer.descriptor_set_layout);
-    //pipeline_layout_info.pSetLayouts = &renderer.descriptor_set_layout;
+    pipeline_layout_info.setLayoutCount = descriptor_set_layouts.size();
     pipeline_layout_info.pSetLayouts = descriptor_set_layouts.data();
 
     if (vkCreatePipelineLayout(renderer.device, &pipeline_layout_info, nullptr, &renderer.pipeline_layout) != VK_SUCCESS)
@@ -685,7 +690,7 @@ void ise::rendering::vulkan_create_descriptor_pool(VulkanRendererData& renderer)
 
 void ise::rendering::vulkan_create_uniform_buffers_descriptor_sets(VulkanRendererData& renderer)
 {
-    std::vector<VkDescriptorSetLayout> layouts(renderer.custom_config.max_frames_in_flight, renderer.descriptor_set_layout);
+    std::vector<VkDescriptorSetLayout> layouts(renderer.custom_config.max_frames_in_flight, renderer.descriptor_set_layout_uniform_buffers);
     VkDescriptorSetAllocateInfo alloc_info{};
     alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     alloc_info.descriptorPool = renderer.descriptor_pool;
@@ -861,7 +866,7 @@ void ise::rendering::vulkan_create_textures_description_set(VulkanRendererData& 
     alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     alloc_info.descriptorPool = renderer.descriptor_pool;
     alloc_info.descriptorSetCount = 1;
-    alloc_info.pSetLayouts = &renderer.descriptor_set_layout;
+    alloc_info.pSetLayouts = &renderer.descriptor_set_layout_textures;
 
     if (vkAllocateDescriptorSets(renderer.device, &alloc_info, &render_object.texture_description_set) != VK_SUCCESS)
     {
@@ -880,7 +885,7 @@ void ise::rendering::vulkan_create_textures_description_set(VulkanRendererData& 
         descriptor_write.pNext = nullptr;
         descriptor_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
         descriptor_write.dstSet = render_object.texture_description_set;
-        descriptor_write.dstBinding = i + 1;
+        descriptor_write.dstBinding = i;
         descriptor_write.dstArrayElement = 0;
         descriptor_write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         descriptor_write.descriptorCount = 1;
@@ -1032,7 +1037,8 @@ void ise::rendering::vulkan_cleanup(VulkanRendererData& renderer)
         vkFreeMemory(renderer.device, renderer.render_textures[i].image_memory, nullptr);
     }
 
-    vkDestroyDescriptorSetLayout(renderer.device, renderer.descriptor_set_layout, nullptr);
+    vkDestroyDescriptorSetLayout(renderer.device, renderer.descriptor_set_layout_uniform_buffers, nullptr);
+    vkDestroyDescriptorSetLayout(renderer.device, renderer.descriptor_set_layout_textures, nullptr);
 
     vkDestroyBuffer(renderer.device, renderer.index_buffer, nullptr);
     vkFreeMemory(renderer.device, renderer.index_buffer_memory, nullptr);
