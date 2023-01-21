@@ -110,6 +110,51 @@ namespace ise
             }
         };
 
+        typedef enum RenderObjectType
+        {
+            TRIANGLE = 0,
+            QUAD = 1,
+            QUAD_WITH_STATIC_TEXTURE = 2,
+            QUAD_WITH_DYNAMIC_TEXTURE = 3,
+            OBJ_WITH_STATIC_TEXTURE = 4
+        } RenderObjectType;
+
+        struct RenderTextureRaw
+        {
+            int width;
+            int height;
+            int channels;
+            stbi_uc* pixels;
+        };
+
+        struct RenderTexture
+        {
+            uint32_t mip_levels;
+            VkImage image;
+            VkDeviceMemory image_memory;
+            VkImageView image_view;
+            VkSampler sampler;
+
+            RenderTextureRaw raw_texture;
+        };
+
+        struct RenderGeometry
+        {
+            tinyobj::attrib_t attrib;
+            std::vector<tinyobj::shape_t> shapes;
+            std::vector<tinyobj::material_t> materials;
+        };
+
+        struct RenderObject
+        {
+            RenderObjectType type;
+
+            std::vector<RenderTexture*> textures;
+            VkDescriptorSet texture_description_set;
+
+            RenderGeometry geometry;
+        };
+
         typedef enum ProjectionType
         {
             PERSPECTIVE_PROJECTION = 0,
@@ -149,6 +194,8 @@ namespace ise
 
         struct VulkanRendererData
         {
+            mutable std::mutex mutex;
+
             std::vector<const char*> instance_extensions;
             const std::vector<const char*> validation_layers = {
                 "VK_LAYER_KHRONOS_validation"
@@ -156,8 +203,9 @@ namespace ise
             const std::vector<const char*> device_extensions = {
                 VK_KHR_SWAPCHAIN_EXTENSION_NAME
             };
-            
+
             VulkanRendererConfig custom_config;
+            bool can_accept_new_frames = true;
             bool force_recreate_swapchain = false;
             uint32_t current_frame = 0;
 
@@ -195,16 +243,14 @@ namespace ise
             VkDeviceMemory depth_image_memory;
             VkImageView depth_image_view;
 
-            uint32_t mip_levels;
-            VkImage texture_image;
-            VkDeviceMemory texture_image_memory;
-            VkImageView texture_image_view;
-            VkSampler texture_sampler;
-
+            std::vector<RenderTexture> render_textures;
+            std::vector<RenderObject> render_objects;
             std::vector<Vertex> vertices;
             std::vector<uint32_t> indices;
+            VkDeviceSize vertex_buffer_size;
             VkBuffer vertex_buffer;
             VkDeviceMemory vertex_buffer_memory;
+            VkDeviceSize index_buffer_size;
             VkBuffer index_buffer;
             VkDeviceMemory index_buffer_memory;
 
@@ -213,7 +259,7 @@ namespace ise
             std::vector<void*> uniform_buffers_mapped;
 
             VkDescriptorPool descriptor_pool;
-            std::vector<VkDescriptorSet> descriptor_sets;
+            std::vector<VkDescriptorSet> uniform_buffers_descriptor_sets;
 
             std::vector<VkSemaphore> image_available_semaphores;
             std::vector<VkSemaphore> render_finished_semaphores;
@@ -236,19 +282,19 @@ namespace ise
         void vulkan_create_color_resources(VulkanRendererData& renderer);
         void vulkan_create_depth_resources(VulkanRendererData& renderer);
         void vulkan_create_framebuffers(VulkanRendererData& renderer);
-        void vulkan_create_texture_image(VulkanRendererData& renderer);
-        void vulkan_create_texture_image_view(VulkanRendererData& renderer);
-        void vulkan_create_texture_sampler(VulkanRendererData& renderer);
-        void vulkan_load_model(VulkanRendererData& renderer);
-        void vulkan_create_vertex_buffer(VulkanRendererData& renderer);
-        void vulkan_create_index_buffer(VulkanRendererData& renderer);
         void vulkan_create_uniform_buffers(VulkanRendererData& renderer);
         void vulkan_create_descriptor_pool(VulkanRendererData& renderer);
-        void vulkan_create_descriptor_sets(VulkanRendererData& renderer);
+        void vulkan_create_uniform_buffers_descriptor_sets(VulkanRendererData& renderer);
         void vulkan_create_command_buffers(VulkanRendererData& renderer);
         void vulkan_create_sync_objects(VulkanRendererData& renderer);
 
-        // Public utilities
+        // Public 
+        RenderTexture* vulkan_create_render_texture(VulkanRendererData& renderer);
+        RenderObject* vulkan_create_render_object(VulkanRendererData& renderer);
+        void vulkan_create_texture_image(VulkanRendererData& renderer, RenderTexture& render_texture);
+        void vulkan_create_texture_sampler(VulkanRendererData& renderer, RenderTexture& render_texture);
+        void vulkan_create_textures_description_set(VulkanRendererData& renderer, RenderObject& render_object);
+        void vulkan_load_model_geometry(VulkanRendererData& renderer, RenderObject& render_object);
         void vulkan_draw_frame(VulkanRendererData& renderer);
         void vulkan_cleanup(VulkanRendererData& renderer);
 
@@ -273,6 +319,8 @@ namespace ise
         void vulkan_copy_buffer(VulkanRendererData& renderer, VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size);
         void vulkan_cleanup_swap_chain(VulkanRendererData& renderer);
         void vulkan_recreate_swap_chain(VulkanRendererData& renderer);
+        void vulkan_update_vertex_buffer(VulkanRendererData& renderer);
+        void vulkan_update_index_buffer(VulkanRendererData& renderer);
 
         // Low level command buffers stuff
         VkCommandBuffer vulkan_begin_single_time_commands(VulkanRendererData& renderer);

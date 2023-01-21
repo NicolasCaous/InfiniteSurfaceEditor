@@ -31,9 +31,6 @@
 
 #include "../util/FileReader.h"
 
-const std::string MODEL_PATH = "C:/Users/caous/Downloads/viking_room.obj";
-const std::string TEXTURE_PATH = "C:/Users/caous/Downloads/viking_room.png";
-
 namespace std {
     template<> struct hash<ise::rendering::Vertex> {
         size_t operator()(ise::rendering::Vertex const& vertex) const {
@@ -371,21 +368,32 @@ void ise::rendering::vulkan_create_render_pass(VulkanRendererData& renderer)
 
 void ise::rendering::vulkan_create_descriptor_set_layout(VulkanRendererData& renderer)
 {
+    VkPhysicalDeviceProperties physical_device_properties;
+    vkGetPhysicalDeviceProperties(renderer.physical_device, &physical_device_properties);
+
+    std::vector<VkDescriptorSetLayoutBinding> bindings;
     VkDescriptorSetLayoutBinding ubo_layout_binding{};
     ubo_layout_binding.binding = 0;
     ubo_layout_binding.descriptorCount = 1;
     ubo_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     ubo_layout_binding.pImmutableSamplers = nullptr;
     ubo_layout_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+    bindings.push_back(ubo_layout_binding);
 
-    VkDescriptorSetLayoutBinding sampler_layout_binding{};
-    sampler_layout_binding.binding = 1;
-    sampler_layout_binding.descriptorCount = 1;
-    sampler_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    sampler_layout_binding.pImmutableSamplers = nullptr;
-    sampler_layout_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    //physical_device_properties.limits.maxPerStageDescriptorSamplers
+    //int offset = bindings.size();
+    //for (int i = 0; i < 16; ++i)
+    //{
+        VkDescriptorSetLayoutBinding sampler_layout_binding{};
+        //sampler_layout_binding.binding = offset + i;
+        sampler_layout_binding.binding = 1;
+        sampler_layout_binding.descriptorCount = 1;
+        sampler_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        sampler_layout_binding.pImmutableSamplers = nullptr;
+        sampler_layout_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        bindings.push_back(sampler_layout_binding);
+    //}
 
-    std::array<VkDescriptorSetLayoutBinding, 2> bindings = { ubo_layout_binding, sampler_layout_binding };
     VkDescriptorSetLayoutCreateInfo layout_info{};
     layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
     layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
@@ -487,10 +495,14 @@ void ise::rendering::vulkan_create_graphics_pipeline(VulkanRendererData& rendere
     dynamic_state.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
     dynamic_state.pDynamicStates = dynamic_states.data();
 
+    std::vector<VkDescriptorSetLayout> descriptor_set_layouts;
     VkPipelineLayoutCreateInfo pipeline_layout_info{};
     pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipeline_layout_info.setLayoutCount = 1;
-    pipeline_layout_info.pSetLayouts = &renderer.descriptor_set_layout;
+    pipeline_layout_info.setLayoutCount = 2;
+    descriptor_set_layouts.push_back(renderer.descriptor_set_layout);
+    descriptor_set_layouts.push_back(renderer.descriptor_set_layout);
+    //pipeline_layout_info.pSetLayouts = &renderer.descriptor_set_layout;
+    pipeline_layout_info.pSetLayouts = descriptor_set_layouts.data();
 
     if (vkCreatePipelineLayout(renderer.device, &pipeline_layout_info, nullptr, &renderer.pipeline_layout) != VK_SUCCESS)
     {
@@ -635,189 +647,6 @@ void ise::rendering::vulkan_create_framebuffers(VulkanRendererData& renderer)
     }
 }
 
-void ise::rendering::vulkan_create_texture_image(VulkanRendererData& renderer)
-{
-    int tex_width, tex_height, tex_channels;
-    stbi_uc* pixels = stbi_load(TEXTURE_PATH.c_str(), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
-    VkDeviceSize image_size = tex_width * tex_height * 4;
-    renderer.mip_levels = static_cast<uint32_t>(std::floor(std::log2(std::max(tex_width, tex_height)))) + 1;
-
-    if (!pixels)
-    {
-        throw std::runtime_error("failed to load texture image!");
-    }
-
-    VkBuffer staging_buffer;
-    VkDeviceMemory staging_buffer_memory;
-    vulkan_create_buffer(renderer, image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging_buffer, staging_buffer_memory);
-
-    void* data;
-    VKRH(vkMapMemory(renderer.device, staging_buffer_memory, 0, image_size, 0, &data));
-    memcpy(data, pixels, static_cast<size_t>(image_size));
-    vkUnmapMemory(renderer.device, staging_buffer_memory);
-
-    stbi_image_free(pixels);
-
-    vulkan_create_image(renderer, tex_width, tex_height, renderer.mip_levels, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, renderer.texture_image, renderer.texture_image_memory);
-
-    vulkan_transition_image_layout(renderer, renderer.texture_image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, renderer.mip_levels);
-    vulkan_copy_buffer_to_image(renderer, staging_buffer, renderer.texture_image, static_cast<uint32_t>(tex_width), static_cast<uint32_t>(tex_height));
-    //transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while generating mipmaps
-
-    vkDestroyBuffer(renderer.device, staging_buffer, nullptr);
-    vkFreeMemory(renderer.device, staging_buffer_memory, nullptr);
-
-    vulkan_generate_mipmaps(renderer, renderer.texture_image, VK_FORMAT_R8G8B8A8_SRGB, tex_width, tex_height, renderer.mip_levels);
-}
-
-void ise::rendering::vulkan_create_texture_sampler(VulkanRendererData& renderer)
-{
-    VkPhysicalDeviceProperties properties{};
-    vkGetPhysicalDeviceProperties(renderer.physical_device, &properties);
-
-    VkSamplerCreateInfo sampler_info{};
-    sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-    switch (renderer.custom_config.texture_filtering)
-    {
-        case NEAREST:
-            sampler_info.magFilter = VK_FILTER_NEAREST;
-            sampler_info.minFilter = VK_FILTER_NEAREST;
-            break;
-        case NEAREST_IF_CLOSE_TO_CAMERA_ELSE_BILINEAR:
-        case NEAREST_IF_CLOSE_TO_CAMERA_ELSE_TRILINEAR:
-            sampler_info.magFilter = VK_FILTER_NEAREST;
-            sampler_info.minFilter = VK_FILTER_LINEAR;
-            break;
-        case BILINEAR:
-        case TRILINEAR:
-            sampler_info.magFilter = VK_FILTER_LINEAR;
-            sampler_info.minFilter = VK_FILTER_LINEAR;
-            break;
-    }
-    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-    if (renderer.custom_config.max_anisotropy < 1.0f)
-    {
-        sampler_info.anisotropyEnable = VK_FALSE;
-    }
-    else
-    {
-        sampler_info.anisotropyEnable = VK_TRUE;
-        sampler_info.maxAnisotropy = std::clamp(
-            renderer.custom_config.max_anisotropy, 
-            1.0f, 
-            properties.limits.maxSamplerAnisotropy);
-    }
-    sampler_info.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-    sampler_info.unnormalizedCoordinates = VK_FALSE;
-    sampler_info.compareEnable = VK_FALSE;
-    sampler_info.compareOp = VK_COMPARE_OP_ALWAYS;
-    if (renderer.custom_config.texture_filtering == TRILINEAR ||
-        renderer.custom_config.texture_filtering == NEAREST_IF_CLOSE_TO_CAMERA_ELSE_TRILINEAR)
-    {
-        sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-    }
-    else
-    {
-        sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-    }
-    sampler_info.minLod = 0.0f;
-    sampler_info.maxLod = static_cast<float>(renderer.mip_levels);
-    sampler_info.mipLodBias = 0.0f;
-
-    if (vkCreateSampler(renderer.device, &sampler_info, nullptr, &renderer.texture_sampler) != VK_SUCCESS)
-    {
-        throw std::runtime_error("failed to create texture sampler!");
-    }
-}
-
-void ise::rendering::vulkan_load_model(VulkanRendererData& renderer)
-{
-    tinyobj::attrib_t attrib;
-    std::vector<tinyobj::shape_t> shapes;
-    std::vector<tinyobj::material_t> materials;
-    std::string warn, err;
-
-    if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str()))
-    {
-        throw std::runtime_error(warn + err);
-    }
-
-    std::unordered_map<Vertex, uint32_t> unique_vertices{};
-
-    for (const auto& shape : shapes)
-    {
-        for (const auto& index : shape.mesh.indices)
-        {
-            Vertex vertex{};
-
-            vertex.pos = {
-                attrib.vertices[3 * index.vertex_index + 0],
-                attrib.vertices[3 * index.vertex_index + 1],
-                attrib.vertices[3 * index.vertex_index + 2]
-            };
-
-            vertex.tex_coord = {
-                attrib.texcoords[2 * index.texcoord_index + 0],
-                1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
-            };
-
-            vertex.color = { 1.0f, 1.0f, 1.0f };
-
-            if (unique_vertices.count(vertex) == 0)
-            {
-                unique_vertices[vertex] = static_cast<uint32_t>(renderer.vertices.size());
-                renderer.vertices.push_back(vertex);
-            }
-
-            renderer.indices.push_back(unique_vertices[vertex]);
-        }
-    }
-}
-
-void ise::rendering::vulkan_create_vertex_buffer(VulkanRendererData& renderer)
-{
-    VkDeviceSize buffer_size = sizeof(renderer.vertices[0]) * renderer.vertices.size();
-
-    VkBuffer staging_buffer;
-    VkDeviceMemory staging_buffer_memory;
-    vulkan_create_buffer(renderer, buffer_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging_buffer, staging_buffer_memory);
-
-    void* data;
-    VKRH(vkMapMemory(renderer.device, staging_buffer_memory, 0, buffer_size, 0, &data));
-    memcpy(data, renderer.vertices.data(), (size_t)buffer_size);
-    vkUnmapMemory(renderer.device, staging_buffer_memory);
-
-    vulkan_create_buffer(renderer, buffer_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, renderer.vertex_buffer, renderer.vertex_buffer_memory);
-
-    vulkan_copy_buffer(renderer, staging_buffer, renderer.vertex_buffer, buffer_size);
-
-    vkDestroyBuffer(renderer.device, staging_buffer, nullptr);
-    vkFreeMemory(renderer.device, staging_buffer_memory, nullptr);
-}
-
-void ise::rendering::vulkan_create_index_buffer(VulkanRendererData& renderer)
-{
-    VkDeviceSize buffer_size = sizeof(renderer.indices[0]) * renderer.indices.size();
-
-    VkBuffer staging_buffer;
-    VkDeviceMemory staging_buffer_memory;
-    vulkan_create_buffer(renderer, buffer_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging_buffer, staging_buffer_memory);
-
-    void* data;
-    VKRH(vkMapMemory(renderer.device, staging_buffer_memory, 0, buffer_size, 0, &data));
-    memcpy(data, renderer.indices.data(), (size_t)buffer_size);
-    vkUnmapMemory(renderer.device, staging_buffer_memory);
-
-    vulkan_create_buffer(renderer, buffer_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, renderer.index_buffer, renderer.index_buffer_memory);
-
-    vulkan_copy_buffer(renderer, staging_buffer, renderer.index_buffer, buffer_size);
-
-    vkDestroyBuffer(renderer.device, staging_buffer, nullptr);
-    vkFreeMemory(renderer.device, staging_buffer_memory, nullptr);
-}
-
 void ise::rendering::vulkan_create_uniform_buffers(VulkanRendererData& renderer)
 {
     VkDeviceSize buffer_size = sizeof(UniformBufferObject);
@@ -840,13 +669,13 @@ void ise::rendering::vulkan_create_descriptor_pool(VulkanRendererData& renderer)
     pool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     pool_sizes[0].descriptorCount = static_cast<uint32_t>(renderer.custom_config.max_frames_in_flight);
     pool_sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    pool_sizes[1].descriptorCount = static_cast<uint32_t>(renderer.custom_config.max_frames_in_flight);
+    pool_sizes[1].descriptorCount = 65536;
 
     VkDescriptorPoolCreateInfo pool_info{};
     pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pool_info.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());
     pool_info.pPoolSizes = pool_sizes.data();
-    pool_info.maxSets = static_cast<uint32_t>(renderer.custom_config.max_frames_in_flight);
+    pool_info.maxSets = 65536;
 
     if (vkCreateDescriptorPool(renderer.device, &pool_info, nullptr, &renderer.descriptor_pool) != VK_SUCCESS)
     {
@@ -854,7 +683,7 @@ void ise::rendering::vulkan_create_descriptor_pool(VulkanRendererData& renderer)
     }
 }
 
-void ise::rendering::vulkan_create_descriptor_sets(VulkanRendererData& renderer)
+void ise::rendering::vulkan_create_uniform_buffers_descriptor_sets(VulkanRendererData& renderer)
 {
     std::vector<VkDescriptorSetLayout> layouts(renderer.custom_config.max_frames_in_flight, renderer.descriptor_set_layout);
     VkDescriptorSetAllocateInfo alloc_info{};
@@ -863,8 +692,8 @@ void ise::rendering::vulkan_create_descriptor_sets(VulkanRendererData& renderer)
     alloc_info.descriptorSetCount = static_cast<uint32_t>(renderer.custom_config.max_frames_in_flight);
     alloc_info.pSetLayouts = layouts.data();
 
-    renderer.descriptor_sets.resize(renderer.custom_config.max_frames_in_flight);
-    if (vkAllocateDescriptorSets(renderer.device, &alloc_info, renderer.descriptor_sets.data()) != VK_SUCCESS)
+    renderer.uniform_buffers_descriptor_sets.resize(renderer.custom_config.max_frames_in_flight);
+    if (vkAllocateDescriptorSets(renderer.device, &alloc_info, renderer.uniform_buffers_descriptor_sets.data()) != VK_SUCCESS)
     {
         throw std::runtime_error("failed to allocate descriptor sets!");
     }
@@ -876,30 +705,17 @@ void ise::rendering::vulkan_create_descriptor_sets(VulkanRendererData& renderer)
         buffer_info.offset = 0;
         buffer_info.range = sizeof(UniformBufferObject);
 
-        VkDescriptorImageInfo image_info{};
-        image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        image_info.imageView = renderer.texture_image_view;
-        image_info.sampler = renderer.texture_sampler;
+        VkWriteDescriptorSet descriptor_write{};
 
-        std::array<VkWriteDescriptorSet, 2> descriptor_writes{};
+        descriptor_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptor_write.dstSet = renderer.uniform_buffers_descriptor_sets[i];
+        descriptor_write.dstBinding = 0;
+        descriptor_write.dstArrayElement = 0;
+        descriptor_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptor_write.descriptorCount = 1;
+        descriptor_write.pBufferInfo = &buffer_info;
 
-        descriptor_writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptor_writes[0].dstSet = renderer.descriptor_sets[i];
-        descriptor_writes[0].dstBinding = 0;
-        descriptor_writes[0].dstArrayElement = 0;
-        descriptor_writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        descriptor_writes[0].descriptorCount = 1;
-        descriptor_writes[0].pBufferInfo = &buffer_info;
-
-        descriptor_writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptor_writes[1].dstSet = renderer.descriptor_sets[i];
-        descriptor_writes[1].dstBinding = 1;
-        descriptor_writes[1].dstArrayElement = 0;
-        descriptor_writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        descriptor_writes[1].descriptorCount = 1;
-        descriptor_writes[1].pImageInfo = &image_info;
-
-        vkUpdateDescriptorSets(renderer.device, static_cast<uint32_t>(descriptor_writes.size()), descriptor_writes.data(), 0, nullptr);
+        vkUpdateDescriptorSets(renderer.device, 1, &descriptor_write, 0, nullptr);
     }
 }
 
@@ -919,8 +735,206 @@ void ise::rendering::vulkan_create_command_buffers(VulkanRendererData& renderer)
     }
 }
 
+ise::rendering::RenderTexture* ise::rendering::vulkan_create_render_texture(VulkanRendererData& renderer)
+{
+    std::lock_guard<std::mutex> lock(renderer.mutex);
+    int i = renderer.render_textures.size();
+    renderer.render_textures.push_back({});
+    return &renderer.render_textures[i];
+}
+
+ise::rendering::RenderObject* ise::rendering::vulkan_create_render_object(VulkanRendererData& renderer)
+{
+    std::lock_guard<std::mutex> lock(renderer.mutex);
+    int i = renderer.render_objects.size();
+    renderer.render_objects.push_back({});
+    return &renderer.render_objects[i];
+}
+
+void ise::rendering::vulkan_create_texture_image(VulkanRendererData& renderer, RenderTexture& render_texture)
+{
+    std::lock_guard<std::mutex> lock(renderer.mutex);
+
+    VkDeviceSize image_size = render_texture.raw_texture.width * render_texture.raw_texture.height * 4;
+    render_texture.mip_levels = static_cast<uint32_t>(std::floor(std::log2(std::max(render_texture.raw_texture.width, render_texture.raw_texture.height)))) + 1;
+
+    VkBuffer staging_buffer;
+    VkDeviceMemory staging_buffer_memory;
+    vulkan_create_buffer(renderer, image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging_buffer, staging_buffer_memory);
+
+    void* data;
+    VKRH(vkMapMemory(renderer.device, staging_buffer_memory, 0, image_size, 0, &data));
+    memcpy(data, render_texture.raw_texture.pixels, static_cast<size_t>(image_size));
+    vkUnmapMemory(renderer.device, staging_buffer_memory);
+
+    vulkan_create_image(renderer, render_texture.raw_texture.width, render_texture.raw_texture.height, render_texture.mip_levels, VK_SAMPLE_COUNT_1_BIT, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, render_texture.image, render_texture.image_memory);
+
+    vulkan_transition_image_layout(renderer, render_texture.image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, render_texture.mip_levels);
+    vulkan_copy_buffer_to_image(renderer, staging_buffer, render_texture.image, static_cast<uint32_t>(render_texture.raw_texture.width), static_cast<uint32_t>(render_texture.raw_texture.height));
+    //transitioned to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL while generating mipmaps
+
+    vkDestroyBuffer(renderer.device, staging_buffer, nullptr);
+    vkFreeMemory(renderer.device, staging_buffer_memory, nullptr);
+
+    vulkan_generate_mipmaps(renderer, render_texture.image, VK_FORMAT_R8G8B8A8_SRGB, render_texture.raw_texture.width, render_texture.raw_texture.height, render_texture.mip_levels);
+
+    render_texture.image_view = vulkan_create_image_view(renderer, render_texture.image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, render_texture.mip_levels);
+}
+
+void ise::rendering::vulkan_create_texture_sampler(VulkanRendererData& renderer, RenderTexture& render_texture)
+{
+    std::lock_guard<std::mutex> lock(renderer.mutex);
+
+    VkPhysicalDeviceProperties properties{};
+    vkGetPhysicalDeviceProperties(renderer.physical_device, &properties);
+
+    VkSamplerCreateInfo sampler_info{};
+    sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+    switch (renderer.custom_config.texture_filtering)
+    {
+    case NEAREST:
+        sampler_info.magFilter = VK_FILTER_NEAREST;
+        sampler_info.minFilter = VK_FILTER_NEAREST;
+        break;
+    case NEAREST_IF_CLOSE_TO_CAMERA_ELSE_BILINEAR:
+    case NEAREST_IF_CLOSE_TO_CAMERA_ELSE_TRILINEAR:
+        sampler_info.magFilter = VK_FILTER_NEAREST;
+        sampler_info.minFilter = VK_FILTER_LINEAR;
+        break;
+    case BILINEAR:
+    case TRILINEAR:
+        sampler_info.magFilter = VK_FILTER_LINEAR;
+        sampler_info.minFilter = VK_FILTER_LINEAR;
+        break;
+    }
+    sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    if (renderer.custom_config.max_anisotropy < 1.0f)
+    {
+        sampler_info.anisotropyEnable = VK_FALSE;
+    }
+    else
+    {
+        sampler_info.anisotropyEnable = VK_TRUE;
+        sampler_info.maxAnisotropy = std::clamp(
+            renderer.custom_config.max_anisotropy,
+            1.0f,
+            properties.limits.maxSamplerAnisotropy);
+    }
+    sampler_info.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+    sampler_info.unnormalizedCoordinates = VK_FALSE;
+    sampler_info.compareEnable = VK_FALSE;
+    sampler_info.compareOp = VK_COMPARE_OP_ALWAYS;
+    if (renderer.custom_config.texture_filtering == TRILINEAR ||
+        renderer.custom_config.texture_filtering == NEAREST_IF_CLOSE_TO_CAMERA_ELSE_TRILINEAR)
+    {
+        sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+    }
+    else
+    {
+        sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+    }
+    sampler_info.minLod = 0.0f;
+    sampler_info.maxLod = static_cast<float>(render_texture.mip_levels);
+    sampler_info.mipLodBias = 0.0f;
+
+    if (vkCreateSampler(renderer.device, &sampler_info, nullptr, &render_texture.sampler) != VK_SUCCESS)
+    {
+        throw std::runtime_error("failed to create texture sampler!");
+    }
+}
+
+void ise::rendering::vulkan_create_textures_description_set(VulkanRendererData& renderer, RenderObject& render_object)
+{
+    std::lock_guard<std::mutex> lock(renderer.mutex);
+
+    VkPhysicalDeviceProperties physical_device_properties;
+    vkGetPhysicalDeviceProperties(renderer.physical_device, &physical_device_properties);
+
+    if (render_object.textures.size() > physical_device_properties.limits.maxPerStageDescriptorSamplers)
+    {
+        throw std::runtime_error(std::format("Too many textures. Textures: {0} Limit: {1}", render_object.textures.size(), physical_device_properties.limits.maxPerStageDescriptorSamplers));
+    }
+
+    VkDescriptorSetAllocateInfo alloc_info{};
+    alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    alloc_info.descriptorPool = renderer.descriptor_pool;
+    alloc_info.descriptorSetCount = 1;
+    alloc_info.pSetLayouts = &renderer.descriptor_set_layout;
+
+    if (vkAllocateDescriptorSets(renderer.device, &alloc_info, &render_object.texture_description_set) != VK_SUCCESS)
+    {
+        throw std::runtime_error("failed to allocate descriptor sets!");
+    }
+
+    std::vector<VkWriteDescriptorSet> descriptor_writes;
+    for (size_t i = 0; i < render_object.textures.size(); i++)
+    {
+        VkDescriptorImageInfo image_info{};
+        image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        image_info.imageView = render_object.textures[i]->image_view;
+        image_info.sampler = render_object.textures[i]->sampler;
+
+        VkWriteDescriptorSet descriptor_write;
+        descriptor_write.pNext = nullptr;
+        descriptor_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptor_write.dstSet = render_object.texture_description_set;
+        descriptor_write.dstBinding = i + 1;
+        descriptor_write.dstArrayElement = 0;
+        descriptor_write.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        descriptor_write.descriptorCount = 1;
+        descriptor_write.pImageInfo = &image_info;
+
+        descriptor_writes.push_back(descriptor_write);
+    }
+
+    vkUpdateDescriptorSets(renderer.device, static_cast<uint32_t>(descriptor_writes.size()), descriptor_writes.data(), 0, nullptr);
+}
+
+void ise::rendering::vulkan_load_model_geometry(VulkanRendererData& renderer, RenderObject& render_object)
+{
+    std::lock_guard<std::mutex> lock(renderer.mutex);
+
+    std::unordered_map<Vertex, uint32_t> unique_vertices{};
+
+    for (const auto& shape : render_object.geometry.shapes)
+    {
+        for (const auto& index : shape.mesh.indices)
+        {
+            Vertex vertex{};
+
+            vertex.pos = {
+                render_object.geometry.attrib.vertices[3 * index.vertex_index + 0],
+                render_object.geometry.attrib.vertices[3 * index.vertex_index + 1],
+                render_object.geometry.attrib.vertices[3 * index.vertex_index + 2]
+            };
+
+            vertex.tex_coord = {
+                render_object.geometry.attrib.texcoords[2 * index.texcoord_index + 0],
+                1.0f - render_object.geometry.attrib.texcoords[2 * index.texcoord_index + 1]
+            };
+
+            vertex.color = { 1.0f, 1.0f, 1.0f };
+
+            if (unique_vertices.count(vertex) == 0)
+            {
+                unique_vertices[vertex] = static_cast<uint32_t>(renderer.vertices.size());
+                renderer.vertices.push_back(vertex);
+            }
+
+            renderer.indices.push_back(unique_vertices[vertex]);
+        }
+    }
+
+    vulkan_update_index_buffer(renderer);
+    vulkan_update_vertex_buffer(renderer);
+}
+
 void ise::rendering::vulkan_draw_frame(VulkanRendererData& renderer)
 {
+    std::lock_guard<std::mutex> lock(renderer.mutex);
+
     VKRH(vkWaitForFences(renderer.device, 1, &renderer.in_flight_fences[renderer.current_frame], VK_TRUE, UINT64_MAX));
 
     uint32_t image_index;
@@ -1009,11 +1023,14 @@ void ise::rendering::vulkan_cleanup(VulkanRendererData& renderer)
 
     vkDestroyDescriptorPool(renderer.device, renderer.descriptor_pool, nullptr);
 
-    vkDestroySampler(renderer.device, renderer.texture_sampler, nullptr);
-    vkDestroyImageView(renderer.device, renderer.texture_image_view, nullptr);
+    for (int i = 0; i < renderer.render_textures.size(); ++i)
+    {
+        vkDestroySampler(renderer.device, renderer.render_textures[i].sampler, nullptr);
+        vkDestroyImageView(renderer.device, renderer.render_textures[i].image_view, nullptr);
 
-    vkDestroyImage(renderer.device, renderer.texture_image, nullptr);
-    vkFreeMemory(renderer.device, renderer.texture_image_memory, nullptr);
+        vkDestroyImage(renderer.device, renderer.render_textures[i].image, nullptr);
+        vkFreeMemory(renderer.device, renderer.render_textures[i].image_memory, nullptr);
+    }
 
     vkDestroyDescriptorSetLayout(renderer.device, renderer.descriptor_set_layout, nullptr);
 
@@ -1550,11 +1567,6 @@ void ise::rendering::vulkan_generate_mipmaps(VulkanRendererData& renderer, VkIma
     vulkan_end_single_time_commands(renderer, command_buffer);
 }
 
-void ise::rendering::vulkan_create_texture_image_view(VulkanRendererData& renderer)
-{
-    renderer.texture_image_view = vulkan_create_image_view(renderer, renderer.texture_image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT, renderer.mip_levels);
-}
-
 void ise::rendering::vulkan_copy_buffer(VulkanRendererData& renderer, VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size)
 {
     VkCommandBuffer commandBuffer = vulkan_begin_single_time_commands(renderer);
@@ -1627,6 +1639,70 @@ void ise::rendering::vulkan_recreate_swap_chain(VulkanRendererData& renderer)
     vulkan_create_color_resources(renderer);
     vulkan_create_depth_resources(renderer);
     vulkan_create_framebuffers(renderer);
+}
+
+void ise::rendering::vulkan_update_vertex_buffer(VulkanRendererData& renderer)
+{
+    VkDeviceSize new_buffer_size = sizeof(renderer.vertices[0]) * renderer.vertices.size();
+    if (renderer.vertex_buffer_size > 0)
+    {
+        vkDestroyBuffer(renderer.device, renderer.vertex_buffer, nullptr);
+        vkFreeMemory(renderer.device, renderer.vertex_buffer_memory, nullptr);
+    }
+    renderer.vertex_buffer_size = new_buffer_size;
+
+    if (new_buffer_size == 0)
+    {
+        return;
+    }
+
+    VkBuffer staging_buffer;
+    VkDeviceMemory staging_buffer_memory;
+    vulkan_create_buffer(renderer, new_buffer_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging_buffer, staging_buffer_memory);
+
+    void* data;
+    VKRH(vkMapMemory(renderer.device, staging_buffer_memory, 0, new_buffer_size, 0, &data));
+    memcpy(data, renderer.vertices.data(), (size_t)new_buffer_size);
+    vkUnmapMemory(renderer.device, staging_buffer_memory);
+
+    vulkan_create_buffer(renderer, new_buffer_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, renderer.vertex_buffer, renderer.vertex_buffer_memory);
+
+    vulkan_copy_buffer(renderer, staging_buffer, renderer.vertex_buffer, new_buffer_size);
+
+    vkDestroyBuffer(renderer.device, staging_buffer, nullptr);
+    vkFreeMemory(renderer.device, staging_buffer_memory, nullptr);
+}
+
+void ise::rendering::vulkan_update_index_buffer(VulkanRendererData& renderer)
+{
+    VkDeviceSize new_buffer_size = sizeof(renderer.indices[0]) * renderer.indices.size();
+    if (renderer.index_buffer_size > 0)
+    {
+        vkDestroyBuffer(renderer.device, renderer.index_buffer, nullptr);
+        vkFreeMemory(renderer.device, renderer.index_buffer_memory, nullptr);
+    }
+    renderer.index_buffer_size = new_buffer_size;
+
+    if (new_buffer_size == 0)
+    {
+        return;
+    }
+
+    VkBuffer staging_buffer;
+    VkDeviceMemory staging_buffer_memory;
+    vulkan_create_buffer(renderer, new_buffer_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging_buffer, staging_buffer_memory);
+
+    void* data;
+    VKRH(vkMapMemory(renderer.device, staging_buffer_memory, 0, new_buffer_size, 0, &data));
+    memcpy(data, renderer.indices.data(), (size_t)new_buffer_size);
+    vkUnmapMemory(renderer.device, staging_buffer_memory);
+
+    vulkan_create_buffer(renderer, new_buffer_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, renderer.index_buffer, renderer.index_buffer_memory);
+
+    vulkan_copy_buffer(renderer, staging_buffer, renderer.index_buffer, new_buffer_size);
+
+    vkDestroyBuffer(renderer.device, staging_buffer, nullptr);
+    vkFreeMemory(renderer.device, staging_buffer_memory, nullptr);
 }
 
 VkCommandBuffer ise::rendering::vulkan_begin_single_time_commands(VulkanRendererData& renderer)
@@ -1765,7 +1841,14 @@ void ise::rendering::vulkan_record_command_buffer(VulkanRendererData& renderer, 
 
     vkCmdBindIndexBuffer(command_buffer, renderer.index_buffer, 0, VK_INDEX_TYPE_UINT32);
 
-    vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer.pipeline_layout, 0, 1, &renderer.descriptor_sets[renderer.current_frame], 0, nullptr);
+    std::vector<VkDescriptorSet> descriptor_sets;
+    descriptor_sets.push_back(renderer.uniform_buffers_descriptor_sets[renderer.current_frame]);
+    for (int i = 0; i < renderer.render_objects.size(); ++i)
+    {
+        descriptor_sets.push_back(renderer.render_objects[i].texture_description_set);
+    }
+
+    vkCmdBindDescriptorSets(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, renderer.pipeline_layout, 0, descriptor_sets.size(), descriptor_sets.data(), 0, nullptr);
 
     vkCmdDrawIndexed(command_buffer, static_cast<uint32_t>(renderer.indices.size()), 1, 0, 0, 0);
 

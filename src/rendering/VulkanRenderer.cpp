@@ -31,17 +31,16 @@ ise::rendering::VulkanRenderer::VulkanRenderer()
     vulkan_create_color_resources(this->m_data);
     vulkan_create_depth_resources(this->m_data);
     vulkan_create_framebuffers(this->m_data);
-    vulkan_create_texture_image(this->m_data);
-    vulkan_create_texture_image_view(this->m_data);
-    vulkan_create_texture_sampler(this->m_data);
-    vulkan_load_model(this->m_data);
-    vulkan_create_vertex_buffer(this->m_data);
-    vulkan_create_index_buffer(this->m_data);
     vulkan_create_uniform_buffers(this->m_data);
     vulkan_create_descriptor_pool(this->m_data);
-    vulkan_create_descriptor_sets(this->m_data);
+    vulkan_create_uniform_buffers_descriptor_sets(this->m_data);
     vulkan_create_command_buffers(this->m_data);
     vulkan_create_sync_objects(this->m_data);
+
+    const std::string MODEL_PATH = "C:/Users/caous/Downloads/viking_room.obj";
+    const std::string TEXTURE_PATH = "C:/Users/caous/Downloads/viking_room.png";
+
+    this->load_obj_with_texture(MODEL_PATH, TEXTURE_PATH);
 }
 
 ise::rendering::VulkanRenderer::~VulkanRenderer()
@@ -103,17 +102,16 @@ void ise::rendering::VulkanRenderer::recreate_renderer()
     vulkan_create_color_resources(this->m_data);
     vulkan_create_depth_resources(this->m_data);
     vulkan_create_framebuffers(this->m_data);
-    vulkan_create_texture_image(this->m_data);
-    vulkan_create_texture_image_view(this->m_data);
-    vulkan_create_texture_sampler(this->m_data);
-    vulkan_load_model(this->m_data);
-    vulkan_create_vertex_buffer(this->m_data);
-    vulkan_create_index_buffer(this->m_data);
     vulkan_create_uniform_buffers(this->m_data);
     vulkan_create_descriptor_pool(this->m_data);
-    vulkan_create_descriptor_sets(this->m_data);
+    vulkan_create_uniform_buffers_descriptor_sets(this->m_data);
     vulkan_create_command_buffers(this->m_data);
     vulkan_create_sync_objects(this->m_data);
+
+    const std::string MODEL_PATH = "C:/Users/caous/Downloads/viking_room.obj";
+    const std::string TEXTURE_PATH = "C:/Users/caous/Downloads/viking_room.png";
+
+    this->load_obj_with_texture(MODEL_PATH, TEXTURE_PATH);
 
     this->start();
 }
@@ -121,6 +119,42 @@ void ise::rendering::VulkanRenderer::recreate_renderer()
 bool ise::rendering::VulkanRenderer::windows_match(SDL_Window* window)
 {
     return window == this->m_window;
+}
+
+void ise::rendering::VulkanRenderer::load_obj_with_texture(std::string obj_path, std::string texture_path)
+{
+    RenderObject* render_object = vulkan_create_render_object(this->m_data);
+    render_object->type = OBJ_WITH_STATIC_TEXTURE;
+
+    std::string warn, err;
+    if (!tinyobj::LoadObj(&render_object->geometry.attrib, &render_object->geometry.shapes, &render_object->geometry.materials, &warn, &err, obj_path.c_str()))
+    {
+        throw std::runtime_error(warn + err);
+    }
+
+    RenderTexture* render_texture = vulkan_create_render_texture(this->m_data);
+
+    render_texture->raw_texture.pixels = stbi_load(
+        texture_path.c_str(),
+        &render_texture->raw_texture.width,
+        &render_texture->raw_texture.height,
+        &render_texture->raw_texture.channels,
+        STBI_rgb_alpha);
+
+    if (!render_texture->raw_texture.pixels)
+    {
+        throw std::runtime_error("failed to load texture image!");
+    }
+
+    vulkan_create_texture_image(this->m_data, *render_texture);
+    vulkan_create_texture_sampler(this->m_data, *render_texture);
+
+    render_object->textures.push_back(render_texture);
+
+    vulkan_create_textures_description_set(this->m_data, *render_object);
+    vulkan_load_model_geometry(this->m_data, *render_object);
+
+    stbi_image_free(render_texture->raw_texture.pixels);
 }
 
 void ise::rendering::VulkanRenderer::handle_window_resize()

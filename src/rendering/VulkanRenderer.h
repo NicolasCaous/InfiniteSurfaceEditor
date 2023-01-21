@@ -20,6 +20,8 @@ namespace ise
 
             bool windows_match(SDL_Window* window);
             void handle_window_resize();
+
+            void load_obj_with_texture(std::string obj_path, std::string texture_path);
         private:
             int m_max_frames_per_second = 90;
             std::atomic<bool> m_accepting_new_draw_call = false;
